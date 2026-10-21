@@ -14,20 +14,20 @@ function logon(req, res) {
             res.status(200).json({name: user.name, email:user.email});
         }
         if(user.email === email && user.password !== password) {
-            res.status(401)
+            res.status(401).json({error: "Invalid email or password"});
         }
         if(user.password === password && user.email !== email) {
-            res.status(401)
+            res.status(401).json({error: "Invalid email or password"});
         }
         if(user.email !== email && user.password !== password) {
-            res.status(401)
+            res.status(401).json({error: "Invalid email or password"});
         }
     })
 }
 
 function logoff(req, res) {
     global.user_id = null;
-    res.status(200);
+    res.status(200).json({message: "Logged out successfully"});
 }
 
 module.exports = { register, logon, logoff };
