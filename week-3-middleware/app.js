@@ -26,7 +26,7 @@ app.use((req, res, next) => {
 
 app.use((req, res, next) => {
   console.log(
-    `[${new Date().toString()}]: ${req.method} ${req.path} (requestId: ${req.requestId})`,
+    `[${new Date().toString()}]: ${req.method} ${req.path} (${req.requestId})`,
   );
   next();
 });
