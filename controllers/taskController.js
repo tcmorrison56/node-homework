@@ -40,9 +40,7 @@ function index(req, res) {
 }
 
 function show(req, res) {
-  console.log(req.params);
   const taskId = parseInt(req.params?.id);
-  console.log(taskId);
   if (!taskId) {
     return res.status(400).json({ message: "Invalid Task ID" });
   }
