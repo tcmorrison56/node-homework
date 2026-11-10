@@ -3,6 +3,7 @@ const util = require("util");
 const scrypt = util.promisify(crypto.scrypt);
 const { userSchema } = require("../validation/userSchema");
 const pool = require("../db/pg-pool");
+const prisma = require("../db/prisma");
 
 /* ------- HELPER FUNCTIONS ------- */
 async function hashPassword(password) {
@@ -28,26 +29,26 @@ async function register(req, res, next) {
       .json({ message: "Validation failed", details: error.details });
   }
 
-  let result = null;
-  value.hashed_password = await hashPassword(value.password);
+  let user = null;
+  value.hashedPassword = await hashPassword(value.password);
+  delete value.password;
+
+  const { name, email, hashedPassword } = value;
 
   try {
-    result = await pool.query(
-      `INSERT INTO users (name, email, hashed_password)
-    VALUES ($1, $2, $3)
-    RETURNING id, name, email`,
-      [value.name, value.email, value.hashed_password],
-    );
-  } catch (e) {
-    if (e.code === "23505") {
+    user = await prisma.user.create({
+      data: { name, email, hashedPassword },
+      select: { name: true, email: true, id: true },
+    });
+  } catch (err) {
+    if (err.name === "PrismaClientKnownRequestError" && err.code === "P2002") {
       return res
         .status(400)
         .json({ message: "This email is already registered." });
+    } else {
+      return next(err);
     }
-    return next(e);
   }
-
-  const user = result.rows[0];
 
   global.user_id = user.id;
   res.status(201).json({ name: user.name, email: user.email });
@@ -55,21 +56,20 @@ async function register(req, res, next) {
 
 async function logon(req, res) {
   if (!req.body) req.body = {};
-  const { email, password } = req.body;
-  const result = await pool.query(`SELECT * FROM users WHERE email = $1`, [
-    email,
-  ]);
+  let { email, password } = req.body;
+  email = email.toLowerCase();
+  // const result = await pool.query(`SELECT * FROM users WHERE email = $1`, [
+  //   email,
+  // ]);
+  const user = await prisma.user.findUnique({ where: { email } });
 
   const goodCredentials =
-    result.rows.length &&
-    (await comparePassword(password, result.rows[0].hashed_password));
+    user && (await comparePassword(password, user.hashedPassword));
   if (!goodCredentials) {
     return res.status(401).json({ error: "Invalid email or password" });
   }
-  global.user_id = result.rows[0].id;
-  res
-    .status(200)
-    .json({ name: result.rows[0].name, email: result.rows[0].email });
+  global.user_id = user.id;
+  res.status(200).json({ name: user.name, email: user.email });
 }
 
 function logoff(req, res) {
