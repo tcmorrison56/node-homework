@@ -1,5 +1,4 @@
 const { taskSchema, patchTaskSchema } = require("../validation/taskSchema");
-const pool = require("../db/pg-pool");
 const prisma = require("../db/prisma");
 
 async function create(req, res) {
