@@ -2,7 +2,7 @@ const crypto = require("crypto");
 const util = require("util");
 const scrypt = util.promisify(crypto.scrypt);
 const { userSchema } = require("../validation/userSchema");
-const pool = require("../db/pg-pool");
+const prisma = require("../db/prisma");
 
 /* ------- HELPER FUNCTIONS ------- */
 async function hashPassword(password) {
@@ -28,48 +28,85 @@ async function register(req, res, next) {
       .json({ message: "Validation failed", details: error.details });
   }
 
-  let result = null;
-  value.hashed_password = await hashPassword(value.password);
+  value.hashedPassword = await hashPassword(value.password);
+  delete value.password;
+
+  const { name, email, hashedPassword } = value;
 
   try {
-    result = await pool.query(
-      `INSERT INTO users (name, email, hashed_password)
-    VALUES ($1, $2, $3)
-    RETURNING id, name, email`,
-      [value.name, value.email, value.hashed_password],
-    );
-  } catch (e) {
-    if (e.code === "23505") {
+    const result = await prisma.$transaction(async (tx) => {
+      const newUser = await tx.user.create({
+        data: { name, email, hashedPassword },
+        select: { name: true, email: true, id: true },
+      });
+
+      const welcomeTaskData = [
+        {
+          title: "Complete your profile",
+          userId: newUser.id,
+          priority: "medium",
+        },
+        {
+          title: "Add your first task",
+          userId: newUser.id,
+          priority: "high",
+        },
+        { title: "Explore the app", userId: newUser.id, priority: "low" },
+      ];
+      await tx.task.createMany({ data: welcomeTaskData });
+
+      const welcomeTasks = await tx.task.findMany({
+        where: {
+          userId: newUser.id,
+          title: { in: welcomeTaskData.map((t) => t.title) },
+        },
+        select: {
+          id: true,
+          title: true,
+          isCompleted: true,
+          userId: true,
+          priority: true,
+        },
+      });
+      return { user: newUser, welcomeTasks };
+    });
+
+    global.user_id = result.user.id;
+    res.status(201).json({
+      user: result.user,
+      welcomeTasks: result.welcomeTasks,
+      transactionStatus: "success",
+    });
+    return;
+  } catch (err) {
+    if (err.name === "PrismaClientKnownRequestError" && err.code === "P2002") {
       return res
         .status(400)
         .json({ message: "This email is already registered." });
+    } else {
+      return next(err);
     }
-    return next(e);
   }
-
-  const user = result.rows[0];
-
-  global.user_id = user.id;
-  res.status(201).json({ name: user.name, email: user.email });
 }
 
 async function logon(req, res) {
   if (!req.body) req.body = {};
-  const { email, password } = req.body;
-  const result = await pool.query(`SELECT * FROM users WHERE email = $1`, [
-    email,
-  ]);
+  let { email, password } = req.body;
+  
+  if (!email || !password) {
+    return res.status(401).json({ error: "Invalid email or password" });
+  }
+  email = email.toLowerCase();
+
+  const user = await prisma.user.findUnique({ where: { email } });
 
   const goodCredentials =
-    result.rows.length &&
-    (await comparePassword(password, result.rows[0].hashed_password));
+    user && (await comparePassword(password, user.hashedPassword));
   if (!goodCredentials) {
     return res.status(401).json({ error: "Invalid email or password" });
   }
-  global.user_id = result.rows[0].id;
-  res
-    .status(200)
-    .json({ name: result.rows[0].name, email: result.rows[0].email });
+  global.user_id = user.id;
+  res.status(200).json({ name: user.name, email: user.email });
 }
 
 function logoff(req, res) {
@@ -77,4 +114,32 @@ function logoff(req, res) {
   res.status(200).json({ message: "Logged out successfully" });
 }
 
-module.exports = { register, logon, logoff };
+async function show(req, res) {
+  const user = await prisma.user.findUnique({
+    where: { id: global.user_id },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      createdAt: true,
+      Task: {
+        where: { isCompleted: false },
+        select: {
+          id: true,
+          title: true,
+          priority: true,
+          createdAt: true,
+        },
+        orderBy: { createdAt: "desc" },
+        take: 5,
+      },
+    },
+  });
+  if (!user) {
+    return res.status(404).json({ message: "User not found" });
+  }
+
+  res.status(200).json(user);
+}
+
+module.exports = { register, logon, logoff, show };
