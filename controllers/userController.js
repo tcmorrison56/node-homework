@@ -1,6 +1,8 @@
 const crypto = require("crypto");
 const util = require("util");
 const scrypt = util.promisify(crypto.scrypt);
+const { randomUUID } = require("crypto");
+const jwt = require("jsonwebtoken");
 const { userSchema } = require("../validation/userSchema");
 const prisma = require("../db/prisma");
 
@@ -17,6 +19,21 @@ async function comparePassword(inputPassword, storedHash) {
   const derivedKey = await scrypt(inputPassword, salt, 64);
   return crypto.timingSafeEqual(keyBuffer, derivedKey);
 }
+
+const cookieFlags = (req) => {
+  return {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "Strict",
+  };
+};
+
+const setJwtCookie = (req, res, user) => {
+  const payload = { id: user.id, csrfToken: randomUUID() };
+  const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: "1h" });
+  res.cookie("jwt", token, { ...cookieFlags(req), maxAge: 3600000 });
+  return payload.csrfToken;
+};
 
 /* ------- CONTROLLER FUNCTIONS ------- */
 async function register(req, res, next) {
@@ -71,9 +88,11 @@ async function register(req, res, next) {
       return { user: newUser, welcomeTasks };
     });
 
-    global.user_id = result.user.id;
+    const csrfToken = setJwtCookie(req, res, result.user);
+
     res.status(201).json({
-      user: result.user,
+      user: { name: result.user.name, email: result.user.email },
+      csrfToken,
       welcomeTasks: result.welcomeTasks,
       transactionStatus: "success",
     });
@@ -92,7 +111,7 @@ async function register(req, res, next) {
 async function logon(req, res) {
   if (!req.body) req.body = {};
   let { email, password } = req.body;
-  
+
   if (!email || !password) {
     return res.status(401).json({ error: "Invalid email or password" });
   }
@@ -105,18 +124,19 @@ async function logon(req, res) {
   if (!goodCredentials) {
     return res.status(401).json({ error: "Invalid email or password" });
   }
-  global.user_id = user.id;
-  res.status(200).json({ name: user.name, email: user.email });
+
+  const csrfToken = setJwtCookie(req, res, user);
+  res.status(200).json({ name: user.name, email: user.email, csrfToken });
 }
 
 function logoff(req, res) {
-  global.user_id = null;
+  res.clearCookie("jwt", cookieFlags(req));
   res.status(200).json({ message: "Logged out successfully" });
 }
 
 async function show(req, res) {
   const user = await prisma.user.findUnique({
-    where: { id: global.user_id },
+    where: { id: req.user.id },
     select: {
       id: true,
       name: true,

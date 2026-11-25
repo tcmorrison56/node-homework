@@ -3,6 +3,22 @@ const { paginationSchema } = require("../validation/paginationSchema");
 const prisma = require("../db/prisma");
 
 /* ------- HELPER FUNCTIONS ------- */
+const getOrderBy = (query) => {
+  const validSortFields = [
+    "title",
+    "priority",
+    "createdAt",
+    "id",
+    "isCompleted",
+  ];
+  const sortBy = query.sortBy || "createdAt";
+  const sortDirection = query.sortDirection === "asc" ? "asc" : "desc";
+
+  if (validSortFields.includes(sortBy)) {
+    return { [sortBy]: sortDirection };
+  }
+  return { createdAt: "desc" };
+};
 
 /* ------- CONTROLLER FUNCTIONS ------- */
 async function create(req, res) {
@@ -18,7 +34,7 @@ async function create(req, res) {
 
   const { title, isCompleted, priority } = value;
   const task = await prisma.task.create({
-    data: { title, isCompleted, priority, userId: global.user_id },
+    data: { title, isCompleted, priority, userId: req.user.id },
     select: {
       id: true,
       title: true,
@@ -44,30 +60,13 @@ async function index(req, res) {
   const { page, limit } = value;
   const skip = (page - 1) * limit;
 
-  const whereClause = { userId: global.user_id };
+  const whereClause = { userId: req.user.id };
   if (req.query.find) {
     whereClause.title = {
       contains: req.query.find,
       mode: "insensitive",
     };
   }
-
-  const getOrderBy = (query) => {
-    const validSortFields = [
-      "title",
-      "priority",
-      "createdAt",
-      "id",
-      "isCompleted",
-    ];
-    const sortBy = query.sortBy || "createdAt";
-    const sortDirection = query.sortDirection === "asc" ? "asc" : "desc";
-
-    if (validSortFields.includes(sortBy)) {
-      return { [sortBy]: sortDirection };
-    }
-    return { createdAt: "desc" };
-  };
 
   const tasks = await prisma.task.findMany({
     where: whereClause,
@@ -116,7 +115,7 @@ async function show(req, res) {
   }
 
   const task = await prisma.task.findUnique({
-    where: { id: taskId, userId: global.user_id },
+    where: { id: taskId, userId: req.user.id },
     select: {
       id: true,
       title: true,
@@ -160,7 +159,7 @@ async function update(req, res, next) {
       data: value,
       where: {
         id: taskId,
-        userId: global.user_id,
+        userId: req.user.id,
       },
       select: {
         id: true,
@@ -188,7 +187,7 @@ async function deleteTask(req, res, next) {
     const task = await prisma.task.delete({
       where: {
         id: taskId,
-        userId: global.user_id,
+        userId: req.user.id,
       },
       select: {
         id: true,
@@ -231,7 +230,7 @@ async function bulkCreate(req, res, next) {
       title: value.title,
       isCompleted: value.isCompleted || false,
       priority: value.priority || "medium",
-      userId: global.user_id,
+      userId: req.user.id,
     });
   }
 

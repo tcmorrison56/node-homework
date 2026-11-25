@@ -1,26 +1,34 @@
+require("dotenv").config();
+
 const express = require("express");
+const cookieParser = require("cookie-parser");
+const helmet = require("helmet");
+const { xss } = require("express-xss-sanitizer");
+const rateLimiter = require("express-rate-limit");
+
 const timeRoutes = require("./routes/timeRoutes");
 const userRoutes = require("./routes/userRoutes");
 const taskRoutes = require("./routes/taskRoutes");
 const analyticsRoutes = require("./routes/analyticsRoutes");
 const notFound = require("./middleware/not-found");
 const errorHandler = require("./middleware/error-handler");
-const authMiddleware = require("./middleware/auth");
+const jwtMiddleware = require("./middleware/jwtMiddleware");
 const prisma = require("./db/prisma");
 
 const app = express();
 
-global.user_id = null;
+app.set("trust proxy", 1);
+app.use(
+  rateLimiter({
+    windowMs: 15 * 60 * 1000,
+    max: 100,
+  }),
+);
+app.use(helmet());
 
 app.use(express.json());
-app.use("/api", timeRoutes);
-app.use("/api/users", userRoutes);
-app.use("/api/tasks", authMiddleware, taskRoutes);
-app.use("/api/analytics", authMiddleware, analyticsRoutes);
-
-app.get("/", (req, res) => {
-  res.send("Hello, World!");
-});
+app.use(cookieParser());
+app.use(xss());
 
 app.get("/health", async (req, res) => {
   try {
@@ -31,6 +39,15 @@ app.get("/health", async (req, res) => {
       .status(500)
       .json({ status: "error", db: "not connected", error: err.message });
   }
+});
+
+app.use("/api", timeRoutes);
+app.use("/api/users", userRoutes);
+app.use("/api/tasks", jwtMiddleware, taskRoutes);
+app.use("/api/analytics", jwtMiddleware, analyticsRoutes);
+
+app.get("/", (req, res) => {
+  res.send("Hello, World!");
 });
 
 app.post("/testpost", (req, res) => {
